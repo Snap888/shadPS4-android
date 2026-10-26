@@ -104,6 +104,53 @@ jobs:
           echo "APK_NAME=${DST}" >> "${GITHUB_ENV}"
           ls -lh "${DST}"
 
+      - name: Sign APK (if unsigned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="${APK_NAME}"
+
+          # Check if APK is already signed
+          if "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify --print-certs "${APK}" 2>/dev/null | grep -q "Signer"; then
+            echo "APK is already signed, skipping."
+          else
+            echo "APK is unsigned, signing with debug keystore..."
+
+            # Generate a debug keystore for CI signing
+            DEBUG_KEYSTORE="ci-debug.keystore"
+            keytool -genkeypair \
+              -keystore "${DEBUG_KEYSTORE}" \
+              -storepass android \
+              -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+
+            # Align the APK for optimal performance
+            "${ANDROID_HOME}/build-tools/35.0.0/zipalign" -f -v -p 4 "${APK}" "${APK}.aligned"
+
+            # Sign the aligned APK
+            "${ANDROID_HOME}/build-tools/35.0.0/apksigner" sign \
+              --ks "${DEBUG_KEYSTORE}" \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              --ks-key-alias androiddebugkey \
+              "${APK}.aligned"
+
+            # Replace original with signed version
+            mv "${APK}.aligned" "${APK}"
+
+            # Verify signature
+            "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify --verbose "${APK}"
+
+            # Update checksum
+            sha256sum "${APK}" > "${APK}.sha256"
+
+            echo "APK successfully signed!"
+          fi
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v5
         with:
